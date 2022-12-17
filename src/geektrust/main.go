@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"geektrust/asset"
 	"io/ioutil"
 	"os"
 	"strings"
+	"sync"
 
 	mapset "github.com/deckarep/golang-set/v2"
 )
 
+/*
 type FileData struct {
 	Funds []Fund `json:"funds"`
 }
@@ -60,6 +63,7 @@ func getNewMutualFundId(arr *[]*MutualFund) int {
 
 	return max + 1
 }
+*/
 
 func main() {
 	cliArgs := os.Args[1:]
@@ -82,11 +86,14 @@ func main() {
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 
-	mutualFunds := make([]*MutualFund, 0)
-	stocks := make([]*Stock, 0)
-	var currentPortFolio CurrentPortFolio
+	var mutualFunds []*asset.MutualFund
+	var stocks []*asset.Stock
+	var currentPortFolio asset.CurrentPortFolio
 
-	populateSeedData(&mutualFunds, &stocks)
+	mutualFunds, stocks, err = populateSeedData([]string{"./sample_input/stock_data1.json", "./sample_input/stock_data2.json"})
+	if err != nil {
+		panic(err)
+	}
 
 	for scanner.Scan() {
 		args := scanner.Text()
@@ -104,7 +111,7 @@ func main() {
 			fmt.Println(argList)
 		case "CALCULATE_OVERLAP":
 			fmt.Println(argList)
-			var mfs []*MutualFund
+			var mfs []*asset.MutualFund
 			for i := 1; i <= len(argList)-1; i++ {
 				for _, mf := range mutualFunds {
 					if argList[i] == mf.Name {
@@ -114,13 +121,13 @@ func main() {
 			}
 
 			for _, f := range mfs {
-				fStocks := mapset.NewSet[Stock]()
+				fStocks := mapset.NewSet[asset.Stock]()
 				for _, s := range f.Stocks {
 					fStocks.Add(*s)
 				}
 				for _, cmf := range currentPortFolio.MutualFunds {
 					// var commonStocks []*Stock
-					cmfStocks := mapset.NewSet[Stock]()
+					cmfStocks := mapset.NewSet[asset.Stock]()
 					for _, s := range cmf.Stocks {
 						cmfStocks.Add(*s)
 					}
@@ -136,7 +143,7 @@ func main() {
 			}
 		case "ADD_STOCK":
 			fmt.Println(argList)
-			var mf MutualFund
+			var mf asset.MutualFund
 			for _, val := range mutualFunds {
 				if val.Name == argList[1] {
 					mf = *val
@@ -159,46 +166,49 @@ func main() {
 	}
 }
 
-func populateSeedData(mutualFunds *[]*MutualFund, stocks *[]*Stock) {
-	seedJSONFile, err := os.Open("./sample_input/stock_data.json")
+func populateSeedData(filePaths []string) ([]*asset.MutualFund, []*asset.Stock, error) {
+	fundsChan := make(chan asset.Fund, 1000)
+	wg := sync.WaitGroup{}
+	var mutualFunds []*asset.MutualFund
+	var stocks []*asset.Stock
+	var err error
+
+	for _, filePath := range filePaths {
+		wg.Add(1)
+
+		go func(filePath string) {
+			defer wg.Done()
+
+			file, err := os.Open(filePath)
+			if err != nil {
+				panic(err)
+			}
+
+			fmt.Println("Successfully Opened seed file")
+
+			var assetData asset.AssetData
+
+			bytes, _ := ioutil.ReadAll(file)
+
+			err = json.Unmarshal(bytes, &assetData)
+			if err != nil {
+				panic(err)
+			}
+			file.Close()
+
+			for _, fund := range assetData.Funds {
+				fundsChan <- fund
+			}
+
+		}(filePath)
+	}
+
+	mutualFunds, stocks, err = asset.Read(fundsChan)
+
 	if err != nil {
-		fmt.Println(err)
+		return nil, nil, err
 	}
-	fmt.Println("Successfully Opened seed file")
-	defer seedJSONFile.Close()
+	wg.Wait()
 
-	byteValue, _ := ioutil.ReadAll(seedJSONFile)
-	var result FileData
-
-	json.Unmarshal([]byte(byteValue), &result)
-
-	for _, v := range result.Funds {
-		var mf *MutualFund
-		exists := false
-		for _, f := range *mutualFunds {
-			if f.Name == v.Name {
-				exists = true
-				mf = f
-			}
-		}
-		if !exists {
-			mf = &MutualFund{Id: getNewMutualFundId(mutualFunds), Name: v.Name}
-			*mutualFunds = append(*mutualFunds, mf)
-		}
-
-		for _, name := range v.Stocks {
-			exists := false
-			for _, sk := range *stocks {
-				if sk.Name == name {
-					exists = true
-					mf.Stocks = append(mf.Stocks, sk)
-				}
-			}
-			if !exists {
-				stk := Stock{Id: getNewStockId(stocks), Name: name}
-				*stocks = append(*stocks, &stk)
-				mf.Stocks = append(mf.Stocks, &stk)
-			}
-		}
-	}
+	return mutualFunds, stocks, nil
 }
