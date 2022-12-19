@@ -2,63 +2,35 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"geektrust/asset"
+	"geektrust/assetParser"
 	"os"
 	"strings"
-
-	mapset "github.com/deckarep/golang-set/v2"
+	"sync"
 )
 
-type FileData struct {
-	Funds []Fund `json:"funds"`
+type CurrentPortfolio struct {
+	MutualFunds []*asset.MutualFund
 }
 
-type Fund struct {
-	Name   string   `json:"name"`
-	Stocks []string `json:"stocks"`
-}
+func (cp CurrentPortfolio) CalculateOverlap(mf *asset.MutualFund) {
+	for _, cpfund := range cp.MutualFunds {
+		var commonStocksSize float64
 
-type CurrentPortFolio struct {
-	MutualFunds []*MutualFund
-}
-
-type Stock struct {
-	Id   int
-	Name string
-}
-
-type MutualFund struct {
-	Id     int
-	Name   string
-	Stocks []*Stock
-}
-
-// TODO: refactor this to generic function
-func getNewStockId(arr *[]*Stock) int {
-	max := 0
-
-	for _, obj := range *arr {
-		if obj.Id > max {
-			max = obj.Id
+		for _, cs := range cpfund.Stocks {
+			for _, fs := range mf.Stocks {
+				if cs.Name == fs.Name {
+					commonStocksSize += 1.0
+				}
+			}
 		}
+
+		var fStockSize float64 = float64(len(cpfund.Stocks))
+		var cmfStocksSize float64 = float64(len(mf.Stocks))
+		overlap := ((2 * commonStocksSize) / (fStockSize + cmfStocksSize)) * 100.0
+		fmt.Println(mf.Name, cpfund.Name, overlap)
 	}
-
-	return max + 1
-}
-
-// TODO: refactor this to generic function
-func getNewMutualFundId(arr *[]*MutualFund) int {
-	max := 0
-
-	for _, obj := range *arr {
-		if obj.Id > max {
-			max = obj.Id
-		}
-	}
-
-	return max + 1
 }
 
 func main() {
@@ -82,122 +54,71 @@ func main() {
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 
-	mutualFunds := make([]*MutualFund, 0)
-	stocks := make([]*Stock, 0)
-	var currentPortFolio CurrentPortFolio
+	// var mutualFunds []*asset.MutualFund
+	// var stocks []*asset.Stock
+	var currentPortFolio CurrentPortfolio
 
-	populateSeedData(&mutualFunds, &stocks)
+	mutualFundsMap := make(map[string]*asset.MutualFund)
+	stocksMap := make(map[string]*asset.Stock)
+	fundsChan := make(chan asset.Fund, 1000)
+	wg1 := sync.WaitGroup{}
+
+	seedFiles := []string{
+		"./sample_input/stock_data1.json",
+		"./sample_input/stock_data2.json",
+		"./sample_input/stock_data3.json",
+		"./sample_input/stock_data4.json",
+	}
+
+	for _, filePath := range seedFiles {
+		wg1.Add(1)
+		go assetParser.ParseFile(filePath, fundsChan, &wg1)
+	}
+	wg1.Wait()
+
+	for len(fundsChan) > 0 {
+		asset.ParseData(<-fundsChan, mutualFundsMap, stocksMap)
+	}
+	if err != nil {
+		panic(err)
+	}
 
 	for scanner.Scan() {
 		args := scanner.Text()
 		argList := strings.Fields(args)
 		fmt.Println("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
+		fmt.Println(argList)
 		switch argList[0] {
 		case "CURRENT_PORTFOLIO":
 			for i := 1; i <= len(argList)-1; i++ {
-				for _, mf := range mutualFunds {
-					if argList[i] == mf.Name {
-						currentPortFolio.MutualFunds = append(currentPortFolio.MutualFunds, mf)
-					}
+				fmt.Println("MF: ", argList[i])
+				if _, ok := mutualFundsMap[argList[i]]; ok {
+					currentPortFolio.MutualFunds = append(currentPortFolio.MutualFunds, mutualFundsMap[argList[i]])
 				}
 			}
-			fmt.Println(argList)
 		case "CALCULATE_OVERLAP":
-			fmt.Println(argList)
-			var mfs []*MutualFund
 			for i := 1; i <= len(argList)-1; i++ {
-				for _, mf := range mutualFunds {
-					if argList[i] == mf.Name {
-						mfs = append(mfs, mf)
-					}
-				}
-			}
-
-			for _, f := range mfs {
-				fStocks := mapset.NewSet[Stock]()
-				for _, s := range f.Stocks {
-					fStocks.Add(*s)
-				}
-				for _, cmf := range currentPortFolio.MutualFunds {
-					// var commonStocks []*Stock
-					cmfStocks := mapset.NewSet[Stock]()
-					for _, s := range cmf.Stocks {
-						cmfStocks.Add(*s)
-					}
-
-					commonStocks := fStocks.Intersect(cmfStocks)
-
-					var commonStocksSize float64 = float64(len(commonStocks.ToSlice()))
-					var fStockSize float64 = float64(len(f.Stocks))
-					var cmfStocksSize float64 = float64(len(cmf.Stocks))
-					overlap := ((2 * commonStocksSize) / (fStockSize + cmfStocksSize)) * 100.0
-					fmt.Println(f.Name, cmf.Name, overlap)
+				if _, ok := mutualFundsMap[argList[i]]; ok {
+					currentPortFolio.CalculateOverlap(mutualFundsMap[argList[i]])
+				} else {
+					fmt.Println("FUND NOT FOUND", argList[i])
 				}
 			}
 		case "ADD_STOCK":
-			fmt.Println(argList)
-			var mf MutualFund
-			for _, val := range mutualFunds {
-				if val.Name == argList[1] {
-					mf = *val
-					break
-				}
+			var stk asset.Stock
+
+			if _, ok := stocksMap[argList[2]]; ok {
+				stk = *stocksMap[argList[2]]
+			} else {
+				stk = asset.Stock{Name: argList[2]}
+				stocksMap[argList[2]] = &stk
 			}
-			exists := false
-			for _, val := range stocks {
-				if val.Name == argList[2] {
-					exists = true
-				}
-			}
-			if !exists {
-				stk := Stock{Id: getNewStockId(&stocks), Name: argList[2]}
-				stocks = append(stocks, &stk)
+			if _, ok := mutualFundsMap[argList[1]]; ok {
+				mf := mutualFundsMap[argList[1]]
 				mf.Stocks = append(mf.Stocks, &stk)
-			}
-		default:
-		}
-	}
-}
-
-func populateSeedData(mutualFunds *[]*MutualFund, stocks *[]*Stock) {
-	seedJSONFile, err := os.Open("./sample_input/stock_data.json")
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Println("Successfully Opened seed file")
-	defer seedJSONFile.Close()
-
-	byteValue, _ := ioutil.ReadAll(seedJSONFile)
-	var result FileData
-
-	json.Unmarshal([]byte(byteValue), &result)
-
-	for _, v := range result.Funds {
-		var mf *MutualFund
-		exists := false
-		for _, f := range *mutualFunds {
-			if f.Name == v.Name {
-				exists = true
-				mf = f
-			}
-		}
-		if !exists {
-			mf = &MutualFund{Id: getNewMutualFundId(mutualFunds), Name: v.Name}
-			*mutualFunds = append(*mutualFunds, mf)
-		}
-
-		for _, name := range v.Stocks {
-			exists := false
-			for _, sk := range *stocks {
-				if sk.Name == name {
-					exists = true
-					mf.Stocks = append(mf.Stocks, sk)
-				}
-			}
-			if !exists {
-				stk := Stock{Id: getNewStockId(stocks), Name: name}
-				*stocks = append(*stocks, &stk)
-				mf.Stocks = append(mf.Stocks, &stk)
+				mutualFundsMap[mf.Name] = mf
+			} else {
+				fmt.Println("FUND NOT FOUND", argList[1])
 			}
 		}
 	}
