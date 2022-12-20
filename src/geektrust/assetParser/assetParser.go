@@ -2,7 +2,6 @@ package assetParser
 
 import (
 	"encoding/json"
-	"fmt"
 	"geektrust/asset"
 	"io/ioutil"
 	"os"
@@ -16,7 +15,6 @@ func ParseFile(filePath string, fundsChan chan asset.Fund, wg *sync.WaitGroup) e
 		panic(err)
 	}
 
-	fmt.Println("Successfully opened seed file")
 	var parsedData asset.ParsedData
 	bytes, _ := ioutil.ReadAll(file)
 	err = json.Unmarshal(bytes, &parsedData)

@@ -1,9 +1,5 @@
 package asset
 
-import (
-	"fmt"
-)
-
 type Fund struct {
 	Name   string   `json:"name"`
 	Stocks []string `json:"stocks"`
@@ -25,8 +21,6 @@ type MutualFund struct {
 }
 
 func ParseData(fund Fund, mutualFundsMap map[string]*MutualFund, stocksMap map[string]*Stock) error {
-	fmt.Println("Received Fund:", fund.Name, "Stocks count", len(fund.Stocks))
-
 	if _, ok := stocksMap[fund.Name]; !ok {
 		for _, stock := range fund.Stocks {
 			stocksMap[stock] = &Stock{Id: 1, Name: stock}

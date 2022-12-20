@@ -14,7 +14,13 @@ type CurrentPortfolio struct {
 	MutualFunds []*asset.MutualFund
 }
 
-func (cp CurrentPortfolio) CalculateOverlap(mf *asset.MutualFund) {
+type calculationResult struct {
+	portfolioFund string
+	fund          string
+	overlap       float64
+}
+
+func (cp CurrentPortfolio) CalculateOverlap(mf *asset.MutualFund, results *[]*calculationResult) {
 	for _, cpfund := range cp.MutualFunds {
 		var commonStocksSize float64
 
@@ -29,7 +35,8 @@ func (cp CurrentPortfolio) CalculateOverlap(mf *asset.MutualFund) {
 		var fStockSize float64 = float64(len(cpfund.Stocks))
 		var cmfStocksSize float64 = float64(len(mf.Stocks))
 		overlap := ((2 * commonStocksSize) / (fStockSize + cmfStocksSize)) * 100.0
-		fmt.Println(mf.Name, cpfund.Name, overlap)
+
+		*results = append(*results, &calculationResult{portfolioFund: cpfund.Name, fund: mf.Name, overlap: overlap})
 	}
 }
 
@@ -54,8 +61,6 @@ func main() {
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 
-	// var mutualFunds []*asset.MutualFund
-	// var stocks []*asset.Stock
 	var currentPortFolio CurrentPortfolio
 
 	mutualFundsMap := make(map[string]*asset.MutualFund)
@@ -86,22 +91,26 @@ func main() {
 	for scanner.Scan() {
 		args := scanner.Text()
 		argList := strings.Fields(args)
-		fmt.Println("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
-		fmt.Println(argList)
 		switch argList[0] {
 		case "CURRENT_PORTFOLIO":
 			for i := 1; i <= len(argList)-1; i++ {
-				fmt.Println("MF: ", argList[i])
 				if _, ok := mutualFundsMap[argList[i]]; ok {
 					currentPortFolio.MutualFunds = append(currentPortFolio.MutualFunds, mutualFundsMap[argList[i]])
+				} else {
+					fmt.Println("FUND NOT FOUND:", argList[i])
 				}
 			}
 		case "CALCULATE_OVERLAP":
 			for i := 1; i <= len(argList)-1; i++ {
 				if _, ok := mutualFundsMap[argList[i]]; ok {
-					currentPortFolio.CalculateOverlap(mutualFundsMap[argList[i]])
+					var results []*calculationResult
+					currentPortFolio.CalculateOverlap(mutualFundsMap[argList[i]], &results)
+
+					for _, result := range results {
+						fmt.Printf("%s %s %.2f%% \n", result.fund, result.portfolioFund, result.overlap)
+					}
 				} else {
-					fmt.Println("FUND NOT FOUND", argList[i])
+					fmt.Println("FUND NOT FOUND:", argList[i])
 				}
 			}
 		case "ADD_STOCK":
@@ -118,8 +127,10 @@ func main() {
 				mf.Stocks = append(mf.Stocks, &stk)
 				mutualFundsMap[mf.Name] = mf
 			} else {
-				fmt.Println("FUND NOT FOUND", argList[1])
+				fmt.Println("FUND NOT FOUND:", argList[1])
 			}
+		default:
+			fmt.Println("Unable to process command:", argList[1])
 		}
 	}
 }
